@@ -39,8 +39,8 @@ SEND_TIMEOUT_SEC = 30
 
 # 섹션 정의: (digest key, 표시 제목, is_surge)
 SECTION_DEFS = [
-    ("checkpoint_cumulative", "🏆 Checkpoint 누적 TOP", False),
-    ("lora_cumulative", "🎨 LoRA 누적 TOP", False),
+    ("checkpoint_recent", "🆕 2026 Checkpoint TOP", False),
+    ("lora_recent", "🎨 2026 LoRA TOP", False),
     ("checkpoint_download_surge", "📈 Checkpoint 다운로드 급상승", True),
     ("lora_download_surge", "🚀 LoRA 다운로드 급상승", True),
     ("checkpoint_thumbs_surge", "❤️ Checkpoint 좋아요 급상승", True),
@@ -74,50 +74,48 @@ def _short_date(value: str | None) -> str | None:
     return value[:10]
 
 
-def _stat_segment(label: str, value: int, delta, pct) -> str:
-    """'👍 13,850 ▲1,240 (+9.8%)' 형태의 통계 조각을 만든다.
+def _delta_suffix(delta, pct) -> str:
+    """'▲1,240 (+9.8%)' 형태의 증가분 접미사를 만든다.
 
-    - delta가 null 또는 0이면 증가분 생략
+    - delta가 null 또는 0이면 빈 문자열
     - pct가 null이면 퍼센트 생략
     """
-    segment = f"{label} {value:,}"
-    if delta is not None and delta > 0:
-        segment += f" ▲{delta:,}"
-        if pct is not None:
-            segment += f" (+{pct}%)"
-    return segment
+    if delta is None or delta <= 0:
+        return ""
+    suffix = f" ▲{delta:,}"
+    if pct is not None:
+        suffix += f" (+{pct}%)"
+    return suffix
 
 
 def render_item(index: int, item: dict) -> str:
-    """단일 모델 항목을 Slack mrkdwn 두 줄로 렌더링한다.
+    """단일 모델 항목을 Slack mrkdwn 여러 줄로 렌더링한다.
 
-    description_short는 Slack 표시에 포함하지 않는다.
+    description_short 와 SFW/NSFW 여부는 Slack 표시에 포함하지 않는다.
     """
     name = _sanitize_link_text(item.get("name"))
     url = item.get("url") or ""
     badge = " 🆕" if item.get("is_new") else ""
-    line1 = f"{index}. <{url}|{name}>{badge}"
 
+    type_ = item.get("type") or "-"
     base_model = item.get("base_model") or "-"
-    thumbs = _stat_segment(
-        "👍",
-        int(item.get("thumbs_up", 0) or 0),
-        item.get("thumbs_up_delta"),
-        item.get("thumbs_up_pct"),
-    )
-    downloads = _stat_segment(
-        "DL",
-        int(item.get("downloads", 0) or 0),
-        item.get("downloads_delta"),
-        item.get("downloads_pct"),
-    )
-    line2 = f"   {base_model} · {thumbs} · {downloads}"
+    date = _short_date(item.get("version_published_at")) or "-"
 
-    date = _short_date(item.get("version_published_at"))
-    if date:
-        line2 += f" · 최신버전 {date}"
+    up = int(item.get("thumbs_up", 0) or 0)
+    dl = int(item.get("downloads", 0) or 0)
+    up_suffix = _delta_suffix(item.get("thumbs_up_delta"), item.get("thumbs_up_pct"))
+    dl_suffix = _delta_suffix(item.get("downloads_delta"), item.get("downloads_pct"))
 
-    return f"{line1}\n{line2}"
+    lines = [
+        f"*{index}. <{url}|{name}>*{badge}",
+        "",
+        f"• 유형: `{type_}`",
+        f"• 베이스: `{base_model}`",
+        f"• 최신버전: `{date}`",
+        f"• 좋아요: `{up:,}`{up_suffix}",
+        f"• 다운로드: `{dl:,}`{dl_suffix}",
+    ]
+    return "\n".join(lines)
 
 
 def _truncate(text: str) -> str:
@@ -144,10 +142,11 @@ def render_section(title: str, items: list[dict], is_surge: bool, is_baseline: b
             return None
         return _section_block(f"*{title}*\n_{EMPTY_SECTION_TEXT}_")
 
-    lines = [f"*{title}*"]
+    parts = [f"*{title}*"]
     for i, item in enumerate(items, start=1):
-        lines.append(render_item(i, item))
-    return _section_block("\n".join(lines))
+        parts.append(render_item(i, item))
+    # 여러 줄 항목이라 항목 사이를 빈 줄로 띄운다.
+    return _section_block("\n\n".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +160,8 @@ def build_payload(digest: dict, recommendation_text: str | None) -> dict:
     counts = digest.get("counts", {}) or {}
     sections = digest.get("sections", {}) or {}
 
-    ckpt_count = counts.get("checkpoint_op_count", 0)
-    lora_count = counts.get("lora_op_count", 0)
+    ckpt_count = counts.get("checkpoint_recent_count", 0)
+    lora_count = counts.get("lora_recent_count", 0)
 
     blocks: list[dict] = []
 
@@ -173,9 +172,10 @@ def build_payload(digest: dict, recommendation_text: str | None) -> dict:
     })
 
     # 요약 (baseline이면 표기)
-    summary = f"요약: Checkpoint OP {ckpt_count:,}개 / LoRA OP {lora_count:,}개"
+    summary = f"요약: 2026 Checkpoint 후보 {ckpt_count:,}개 / 2026 LoRA 후보 {lora_count:,}개"
     if is_baseline:
-        summary += "\n_baseline 첫 실행: 🆕/증가분 표시는 생략됩니다._"
+        summary += ("\n_baseline 첫 실행: 이번 실행부터 새 기준의 비교 기준을 저장합니다. "
+                    "다음 실행부터 🆕/▲ 증가분이 표시됩니다._")
     blocks.append(_section_block(summary))
     blocks.append({"type": "divider"})
 

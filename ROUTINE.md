@@ -59,27 +59,57 @@ commit/push 할 수 있어야 한다. (다음 주 비교를 위해 상태가 유
 아래 프롬프트를 Claude Code Routine에 등록한다.
 
 ```text
-이 repo에서 아래 순서대로 작업한다.
+이 Routine은 monkeykim111/civitai-ranking repo에서 매주 Civitai 모델 랭킹 digest를 생성하고 Slack으로 발송한다.
+숫자/랭킹/델타는 직접 계산하지 말고 스크립트가 만든 digest.json 값을 그대로 사용한다.
+civitai_digest.py 와 send_slack.py 의 로직은 수정하지 않는다.
 
-1. 의존성을 설치한다. (pip install -r requirements.txt)
-2. python civitai_digest.py 를 실행한다.
-3. 생성된 digest.json 을 읽는다.
-4. digest.json 의 각 섹션을 매직 서비스 관점에서 검토한다.
-   - 주력은 웹툰/만화/일러스트 그림체다.
-   - 실사 모델도 일부 쓰지만 우선순위는 낮다.
-   - 학교 대상 서비스 맥락상 NSFW 가능성이 높은 모델은 추천에서 보수적으로 본다.
-5. 이번 주 추천 3개와 각 모델별 한 줄 코멘트를 recommendation.md 로 작성한다.
-6. python send_slack.py digest.json --recommendation recommendation.md --send 를 실행해 Slack으로 보낸다.
-7. Slack 발송이 성공하면, 변경된 state.json 과 history/ 를 커밋한다.
-8. default branch 에 push 한다. 커밋 메시지는 영어로 작성한다.
+1. 의존성 설치: pip install -r requirements.txt
+
+2. 환경변수 SLACK_WEBHOOK_URL 확인. 없으면 발송하지 말고 "SLACK_WEBHOOK_URL 누락"으로 보고하고 멈춘다. (CIVITAI_TOKEN은 선택.)
+
+3. python civitai_digest.py 실행. 실패하면 Slack 발송하지 말고 원인을 보고하고 멈춘다.
+
+4. digest.json 이 생성됐는지 확인. 없으면 발송하지 말고 멈춘다.
+
+5. digest.json 을 읽고 recommendation.md 를 작성한다.
+   - 추천은 checkpoint_recent, lora_recent, 그리고 surge 섹션을 기준으로 작성한다.
+     (all-time 누적 모델은 더 이상 없으며 추천 기준에서 제외한다.)
+   - 매직 서비스 관점: 웹툰/만화/일러스트 그림체 중심 서비스. Checkpoint는 베이스 모델 후보,
+     LoRA는 스타일/캐릭터/채색/선화/효과 확장 후보. 실사는 참고만.
+   - SFW/NSFW를 구분하지 않는다. NSFW 여부는 서비스에서 이미 블러 처리한다고 가정한다.
+   - 숫자는 digest.json 값을 그대로 인용하고 재계산하지 않는다.
+   - digest.json 의 sections 에 실제로 있는 모델 중에서만 고른다. 없는 모델명을 지어내지 않는다.
+   - 각 항목에 [Checkpoint] 또는 [LoRA] 와 base model 을 표기하고, 가능하면 Checkpoint와 LoRA를 균형 있게 포함한다.
+   - 형식(너무 길지 않게):
+     이번 주 추천 요약
+     1. [모델명] — 추천 이유 한 줄
+     2. [모델명] — 추천 이유 한 줄
+     3. [모델명] — 추천 이유 한 줄
+     운영 메모:
+     - 이번 주 변화/주의점 1~2줄
+
+6. python send_slack.py digest.json --recommendation recommendation.md --send 실행.
+   이 명령이 exit code 0("Slack message sent")일 때만 다음 단계로 간다.
+   실패하면 status/응답을 보고하고, state/history를 커밋하지 말고 멈춘다.
+
+7. Slack 발송 성공 시에만, 변경된 state를 PR로 올린다:
+   - git 사용자 정보가 없으면 설정한다: user.name=monkeykim111, user.email=monkeykim111@users.noreply.github.com
+   - TODAY=$(date +%F)
+   - git checkout -b "digest-update-$TODAY"
+   - git add state.json history/   (digest.json, recommendation.md, *_debug.json, slack_payload_debug.json, .env 는 절대 add 하지 않는다)
+   - 커밋할 변경이 없으면 push/PR을 생략하고 그 사실을 보고한다.
+   - git commit -m "chore: update weekly civitai digest state ($TODAY)"
+   - git push -u origin "digest-update-$TODAY"
+   - gh pr create --base main --head "digest-update-$TODAY" --title "chore: weekly civitai digest state ($TODAY)" --body "주간 state 자동 업데이트. 다음 일요일 실행 전에 머지하세요." (PR을 draft로 만들지 않는다. --draft 옵션을 쓰지 않는다.)
+   - 혹시 draft 상태로 생성되면 gh pr ready "digest-update-$TODAY" 로 리뷰 가능 상태로 전환한다.
 
 제약(반드시 지킬 것):
 - 숫자 계산을 다시 하지 마라. 좋아요/다운로드/랭킹 숫자는 digest.json 의 값을 그대로 사용한다.
 - Claude 는 recommendation.md 작성(그림체 적합성 판단)에만 판단을 사용한다.
 - Slack 메시지 렌더링은 send_slack.py 에 맡긴다. 직접 Block Kit 을 만들지 않는다.
 - 어느 단계든 실패하면 Slack 발송 전에 멈추고 에러를 보고한다.
-- state.json / history 커밋은 반드시 Slack 발송 성공 후에만 수행한다.
-  (발송 실패 시 상태를 커밋하지 않는다 → 다음 실행에서 재시도 가능하게 둔다.)
+- 첫 실행은 state.json 이 없어 baseline 으로 동작한다(🆕/▲ 없이 2026 recent TOP 중심). 정상이다.
+- 위 PR이 머지돼야 다음 주 비교가 된다. 머지는 사람이 한다.
 ```
 
 추천 커밋 메시지:
@@ -87,6 +117,10 @@ commit/push 할 수 있어야 한다. (다음 주 비교를 위해 상태가 유
 ```text
 chore: update weekly civitai digest state
 ```
+
+> 참고: 위 7번은 **PR 방식**이다. Routine의 `무제한 git push 허용`(default 브랜치 직접 push)이
+> 켜져 있다면, 7번을 단순히 `main`에 직접 커밋·push 하도록 바꿔도 된다.
+> 현재는 그 토글이 꺼져 있어 PR → 사람이 머지하는 흐름을 사용한다.
 
 ---
 
@@ -105,7 +139,7 @@ repo에는 운영 시작 시점에 `state.json` 이 **없는 상태**(로컬 테
 `history/` 는 `.gitkeep` 만 존재)로 커밋되어 있다. 따라서:
 
 1. **운영 첫 Routine 실행은 baseline 이다.** (`state.json` 이 없으므로)
-2. 첫 실행에서는 **🆕 / ▲ 증가분 없이 누적 TOP 만 발송**된다.
+2. 첫 실행에서는 **🆕 / ▲ 증가분 없이 2026 recent TOP 중심으로 발송**된다.
 3. 첫 실행이 성공하면 생성된 **`state.json` 과 `history/YYYY-MM-DD.json` 을 반드시 커밋/푸시**한다.
 4. **이 커밋이 되어야 다음 주부터 주간 증가분(🆕/▲)이 계산된다.**
    - 커밋이 누락되면 매주 baseline 으로만 동작해 비교가 영원히 안 된다.
