@@ -1,0 +1,30 @@
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 환경변수 (실제 시크릿) — .env.example만 커밋한다.
+.env
+.env.*
+!.env.example
+
+# 검증/발송 산출물 (매번 재생성되므로 커밋 제외)
+checkpoint_candidates_debug.json
+lora_candidates_debug.json
+slack_payload_debug.json
+digest.json
+
+# 운영 추천 코멘트 (매주 재생성, Routine이 생성 후 발송에만 사용)
+recommendation.md
+
+# OS
+.DS_Store
+
+# 주의: state.json 과 history/ 는 다음 주 비교를 위해 반드시 커밋한다.
+#       (여기서 제외하지 말 것)
